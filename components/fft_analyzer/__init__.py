@@ -18,40 +18,21 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Required("microphone"):
         cv.use_id(microphone.Microphone),
 
-    # FFT window size, in samples. Must be a power of two. Larger = finer
-    # frequency resolution but slower updates and more CPU per frame.
     cv.Optional("fft_size", default=512):
         cv.one_of(256, 512, 1024, int=True),
 
-    # Peak-hold + decay smoothing factor.
-    # 0.0 = no smoothing (bars track the raw signal instantly)
-    # 0.99 = very slow, smooth fall-off after a peak
+    # Wspolczynnik opadania slupkow (peak-hold + decay).
+    # 0.0 = brak wygladzania (natychmiastowe opadanie do wartosci surowej)
+    # 0.99 = bardzo wolne opadanie
     cv.Optional("decay", default=0.85):
         cv.float_range(min=0.0, max=0.99),
 
-    # Window overlap mode:
-    # false (default) = each FFT window starts from a fresh, empty buffer.
-    # true             = consecutive windows share 50% of their samples,
-    #                     roughly doubling the update rate at the cost of
-    #                     computing the FFT about twice as often.
-    cv.Optional("overlap", default=False):
-        cv.boolean,
-
-    # Noise gate: any band/bar whose raw magnitude is below this value is
-    # clamped to 0 before smoothing, to suppress microphone self-noise
-    # flicker on quiet bands. 0.0 (default) disables the gate. Watch the
-    # DEBUG log in a quiet room to find a good value for your hardware.
-    cv.Optional("noise_floor", default=0.0):
-        cv.float_range(min=0.0),
-
-    # Number of generic, log-spaced visualizer "bars" for an equalizer
-    # display (0 = disabled, default). Not exposed as HA sensors - read
-    # them from a display lambda via id(<fft_id>).get_bar(i).
+    # Liczba generycznych "slupkow" equalizera do wizualizacji (log-spaced).
+    # Nie tworzy sensorow HA - odczyt tylko z lambdy: id(fft).get_bar(i)
     cv.Optional("bar_count", default=0):
         cv.int_range(min=0, max=128),
 
-    # Frequency range spanned by the bar_count bars, distributed
-    # logarithmically (more resolution at low frequencies).
+    # Zakres czestotliwosci rozkladany logarytmicznie na bar_count slupkow.
     cv.Optional("bar_low_frequency", default="50Hz"):
         cv.frequency,
 
@@ -68,8 +49,6 @@ async def to_code(config):
 
     cg.add(var.set_fft_size(config["fft_size"]))
     cg.add(var.set_decay(config["decay"]))
-    cg.add(var.set_overlap(config["overlap"]))
-    cg.add(var.set_noise_floor(config["noise_floor"]))
 
     if config["bar_count"] > 0:
         cg.add(var.set_bar_count(config["bar_count"]))

@@ -12,12 +12,11 @@ from a `display:` lambda via `id(<fft_id>).get_bar(i)` (a configurable
 number of generic, log-spaced visualizer bars). If you need the values in
 Home Assistant, wrap them in your own `sensor:` using a `lambda:` source.
 
-## Installation
+## Installation local
 
 Copy the `components/fft_analyzer` folder into your ESPHome config
 directory and reference it as a local external component:
 
-### Local
 ```yaml
 external_components:
   - source:
@@ -26,7 +25,8 @@ external_components:
     components: [fft_analyzer]
 ```
 
-### Git
+## Installation Git
+
 ```yaml
 external_components:
   - source: github://cosmicDustOfLightLength/esphome-fft_analyzer@master
@@ -86,7 +86,7 @@ button:
       - microphone.capture: mic_id
 ```
 
-Good while you're still tuning `noise_floor`/`decay`/gain and want to
+Good while you're still tuning `decay`/bar range/gain and want to
 start/restart capture on demand without rebooting the device. Not
 convenient for normal use since there's no persistent on/off state.
 
@@ -118,8 +118,6 @@ fft_analyzer:
 
   fft_size: 512               # 256 | 512 | 1024, default 512
   decay: 0.85                 # 0.0 - 0.99, default 0.85
-  overlap: false               # true | false, default false
-  noise_floor: 0.0             # >= 0.0, default 0.0 (gate disabled)
 
   bar_count: 5                 # 0 - 128, default 0 (visualizer bars disabled)
   bar_low_frequency: 50Hz
@@ -128,14 +126,21 @@ fft_analyzer:
 
 | Option               | Type    | Default  | Description |
 |-----------------------|---------|----------|-------------|
-| `microphone`          | id      | required | The `microphone` component to pull audio from. Expected sample rate is 16 kHz. |
+| `microphone`          | id      | required | The `microphone` component to pull audio from. The FFT math assumes a 48 kHz sample rate — if your mic runs at a different rate, the named-band and bar frequency ranges below will be off proportionally. |
 | `fft_size`             | int     | `512`    | FFT window size in samples. Must be a power of two (`256`, `512`, or `1024`). Larger = finer frequency resolution (more Hz/bin), but updates less often and costs more CPU per frame. |
 | `decay`                | float   | `0.85`   | Peak-hold + decay smoothing factor, `0.0`-`0.99`. A band/bar jumps immediately to a new, higher value ("peak hold"), but decays towards a new, lower value by this factor instead of snapping to it. Closer to `1.0` = slower, smoother fall-off; closer to `0.0` = near-instant tracking of the raw signal. |
-| `overlap`              | bool    | `false`  | `false`: each FFT window is computed from a completely fresh set of samples (simpler, less CPU, slightly choppier animation). `true`: consecutive windows share 50% of their samples (standard overlapping-window technique), roughly doubling the effective update rate and producing visibly smoother animation, at the cost of running the FFT about twice as often. Turn this on if your chip has CPU headroom to spare. |
-| `noise_floor`          | float   | `0.0`    | Noise gate. Any band/bar whose raw magnitude is below this value is clamped to `0` *before* peak-hold/decay smoothing, which stops microphone self-noise from showing up as low-level "flicker" on quiet bands. `0.0` disables the gate entirely. See "Tuning the noise gate" below. |
 | `bar_count`            | int     | `0`      | Number of generic, log-spaced visualizer bars for an equalizer display. `0` disables them. Not exposed as HA sensors — read with `id(<fft_id>).get_bar(i)` from a display lambda. |
 | `bar_low_frequency`    | frequency | `50Hz`  | Lower edge of the frequency range spanned by the bars. |
 | `bar_high_frequency`   | frequency | `18000Hz` | Upper edge of the frequency range spanned by the bars. Bars are distributed **logarithmically** between the low and high frequency (more resolution at low frequencies, matching human hearing and the layout of a typical hardware equalizer). |
+
+There is currently no YAML option for window overlap or a noise gate —
+each FFT window starts from a freshly cleared sample buffer, and no
+magnitude thresholding is applied before smoothing. Earlier drafts of
+this component experimented with both (50% overlapping windows, a
+configurable noise floor), but they added complexity that wasn't earning
+its keep and were dropped from this release in favor of the simpler,
+known-good version documented here. If you want either, see "Extending
+this component" below.
 
 ## Runtime API (for display lambdas)
 
@@ -161,9 +166,9 @@ level, one line per frame:
 [D][fft_analyzer:xxx]: FFT 60=0.012 120=0.034 250=0.021 500=0.045 1k=0.102 2k=0.087 4k=0.033 8k=0.015 16k=0.006
 ```
 
-This is useful for tuning (see "Tuning the noise gate" below) but, since
-it logs on every single FFT frame, it is fairly noisy and will dominate
-your log output while left on. To turn it off, either:
+This is useful for tuning `decay`/mic gain but, since it logs on every
+single FFT frame, it is fairly noisy and will dominate your log output
+while left on. To turn it off, either:
 
 - Set the global log level below `DEBUG` (e.g. `INFO`) in your YAML:
   ```yaml
@@ -178,22 +183,9 @@ your log output while left on. To turn it off, either:
       fft_analyzer: INFO
   ```
 
-The `dump_config()` summary (FFT size, decay, overlap, noise floor,
-visualizer bar settings) is logged once at `CONFIG` level on every boot
-regardless of this setting — only the per-frame `FFT ...=` line is
-`DEBUG`-gated.
-
-## Tuning the noise gate
-
-There's no universal `noise_floor` value — it depends on your
-microphone, its gain setting, and ambient noise. To find a good value:
-
-1. Set `logger: level: DEBUG` and leave `noise_floor: 0.0`.
-2. In a quiet room, watch the `FFT 60=... 120=... ...` log line for a
-   few seconds and note the typical magnitude of the noise floor on your
-   quietest bands.
-3. Set `noise_floor` to a bit above that value, re-flash, and check that
-   quiet-room flicker is gone but real low-level sounds still register.
+The `dump_config()` summary (FFT size, sample rate, decay, visualizer bar
+settings) is logged once at `CONFIG` level on every boot regardless of
+this setting — only the per-frame `FFT ...=` line is `DEBUG`-gated.
 
 ## Concurrency model
 
@@ -201,26 +193,44 @@ Audio is delivered asynchronously via the microphone's data callback,
 which ESPHome's `microphone` implementations invoke from a dedicated
 FreeRTOS task — typically running on a **different CPU core** than the
 main ESPHome loop task on dual-core chips (ESP32, ESP32-S3, ...). That
-means the producer (`process_audio_()`) and the consumer
-(`loop()`/`calculate_fft_()`) can genuinely run at the same time on two
-different cores.
+means the producer (`process_audio_()`, mic task) and the consumer
+(`loop()`/`calculate_fft_()`, main task) can genuinely run at the same
+time on two different cores.
 
-All access to the shared sample buffer and the "window ready" flag is
-guarded by a FreeRTOS mutex. If you fork/modify this component:
+**This version does not use a mutex** to guard the shared sample buffer.
+It relies instead on the `new_data_` flag being set only after a window
+fills up, and on `loop()` clearing `new_data_` before `calculate_fft_()`
+runs, to keep the producer from writing into the buffer while it's being
+read. This is simpler and has worked reliably in practice, but it is not
+a textbook-correct lock-free design — there is a narrow theoretical
+window where the two tasks could touch `samples_` at the same time. An
+earlier draft of this component added a FreeRTOS mutex around all buffer
+access to close that window properly; it was pulled from this release
+because it didn't resolve the actual problem being chased at the time
+and added real complexity for no observed benefit. If you see occasional
+corrupted-looking frames (a sudden huge spike or stuck value) and want to
+rule this out, reintroducing a mutex around `samples_`/`new_data_` in
+`process_audio_()` and `loop()` is the place to start.
 
-- Every early exit from a mutex-locked loop must still reach
-  `xSemaphoreGive()`. Using `return` instead of `break` inside the locked
-  loop in `process_audio_()` leaves the mutex permanently held and
-  freezes the whole device within seconds — this exact bug shipped in an
-  earlier version of this component.
-- `calculate_fft_()` reads the sample buffer **without** holding the
-  mutex. That's only safe because, by the time it runs, the "window
-  ready" flag is already `true`, and the producer checks that flag
-  (under the mutex) before it will touch the buffer again. Don't break
-  that invariant.
+## Extending this component
 
-See the comments in `fft_analyzer.h`/`fft_analyzer.cpp` for the full
-details.
+Starting points if you want to pick this component up further:
+
+- **Noise gate**: in `calculate_fft_()`, right after `value`/the bar
+  magnitude is computed and before it's written into `smoothed_[]`/
+  `bars_[]`, clamp it to `0.0f` when it's below a threshold. Expose the
+  threshold as a new `set_noise_floor()` setter and a `noise_floor` YAML
+  option (`cv.Optional("noise_floor", default=0.0): cv.float_range(min=0.0)`).
+- **Window overlap**: in `loop()`, instead of `this->samples_.clear()`,
+  keep the second half of the buffer with an in-place `memmove()` +
+  `resize(fft_size_ / 2)` (shrinking never reallocates), so the next
+  window reuses half its samples. Gate it behind a `set_overlap()`
+  setter / `overlap` YAML boolean so it's opt-in.
+- **Actual sample rate**: `SAMPLE_RATE` is a hardcoded `48000.0f`
+  constant in `fft_analyzer.cpp`. If you use this with a microphone
+  running at a different rate, update that constant (or better, make it
+  a YAML option) to keep the named-band and bar frequency ranges
+  accurate.
 
 ## License
 

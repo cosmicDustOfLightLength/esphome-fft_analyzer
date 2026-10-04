@@ -16,8 +16,6 @@ fft_analyzer:
   microphone: mic_id
   fft_size: 512
   decay: 0.85
-  overlap: true          # smoother animation; set to false to save CPU
-  noise_floor: 0.02       # tune by watching the DEBUG log in a quiet room
   bar_count: 32
   bar_low_frequency: 50Hz
   bar_high_frequency: 18000Hz
@@ -38,8 +36,8 @@ switch:
       - microphone.stop_capture: mic_id
 
 # The 9 named bands are logged every FFT frame at DEBUG level, which is
-# useful while tuning noise_floor/decay but noisy to leave on. Silence
-# just this component once you're done tuning:
+# useful while tuning `decay` but noisy to leave on. Silence just this
+# component once you're done tuning:
 logger:
   level: DEBUG
   logs:
