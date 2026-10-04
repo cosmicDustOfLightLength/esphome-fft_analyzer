@@ -22,14 +22,15 @@ class FFTAnalyzer : public Component {
     this->fft_size_ = size;
   }
 
-  // Wspolczynnik opadania (0.0 - 1.0). Im blizej 1.0, tym wolniej
-  // slupek opada po piku. Domyslnie 0.85.
+  // Decay factor (0.0 - 1.0). Closer to 1.0 = the bar falls more slowly
+  // after a peak. Defaults to 0.85.
   void set_decay(float decay) {
     this->decay_ = decay;
   }
 
-  // Liczba generycznych "slupkow" do wizualizacji (nie sa to sensory
-  // HA - dostepne wylacznie z C++/lambdy, zeby nie mnozyc encji).
+  // Number of generic visualizer "bars" (these are NOT Home Assistant
+  // sensors - only available from C++/a display lambda, so we don't end
+  // up creating entities nobody asked for).
   void set_bar_count(size_t count) {
     this->bar_count_ = count;
     this->bars_.resize(count, 0.0f);
@@ -43,7 +44,7 @@ class FFTAnalyzer : public Component {
     this->bar_high_hz_ = high_hz;
   }
 
-  // Dostep z lambdy displaya: id(fft).get_bar_count() / get_bar(i)
+  // Access from a display lambda: id(fft).get_bar_count() / get_bar(i)
   size_t get_bar_count() const {
     return this->bar_count_;
   }
@@ -71,16 +72,16 @@ class FFTAnalyzer : public Component {
 
   bool new_data_{false};
 
-  // Surowe wyniki 9 pasm FFT (magnitude z biezacej ramki).
+  // Raw results of the 9 FFT bands (magnitude from the current frame).
   float bands_[9]{};
 
-  // Wygladzone wartosci (peak-hold + decay), widoczne w logu DEBUG.
+  // Smoothed values (peak-hold + decay), what shows up in the DEBUG log.
   float smoothed_[9]{};
 
-  // Wspolczynnik opadania per klatka FFT.
+  // Decay factor applied per FFT frame.
   float decay_{0.85f};
 
-  // Generyczne slupki (log-spaced) do wizualizacji.
+  // Generic visualizer bars (log-spaced).
   size_t bar_count_{0};
   float bar_low_hz_{50.0f};
   float bar_high_hz_{18000.0f};

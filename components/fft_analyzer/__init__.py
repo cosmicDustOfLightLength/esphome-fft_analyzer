@@ -21,18 +21,18 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Optional("fft_size", default=512):
         cv.one_of(256, 512, 1024, int=True),
 
-    # Wspolczynnik opadania slupkow (peak-hold + decay).
-    # 0.0 = brak wygladzania (natychmiastowe opadanie do wartosci surowej)
-    # 0.99 = bardzo wolne opadanie
+    # Bar decay factor (peak-hold + decay).
+    # 0.0 = no smoothing (falls instantly to the raw value)
+    # 0.99 = very slow fall-off
     cv.Optional("decay", default=0.85):
         cv.float_range(min=0.0, max=0.99),
 
-    # Liczba generycznych "slupkow" equalizera do wizualizacji (log-spaced).
-    # Nie tworzy sensorow HA - odczyt tylko z lambdy: id(fft).get_bar(i)
+    # Number of generic equalizer visualizer "bars" (log-spaced).
+    # Does not create HA sensors - read only from a lambda: id(fft).get_bar(i)
     cv.Optional("bar_count", default=0):
         cv.int_range(min=0, max=128),
 
-    # Zakres czestotliwosci rozkladany logarytmicznie na bar_count slupkow.
+    # Frequency range distributed logarithmically across bar_count bars.
     cv.Optional("bar_low_frequency", default="50Hz"):
         cv.frequency,
 

@@ -70,11 +70,13 @@ void FFTAnalyzer::setup() {
   // --------------------------------------------------
 
   /*
-   * Microphone jest uruchamiany przez ESPHome.
+   * The microphone is started/stopped by ESPHome (via
+   * microphone.capture / microphone.stop_capture actions
+   * in YAML).
    *
-   * Nie wywolujemy mic_->start().
-   * add_data_callback() dostarcza nam kolejne
-   * porcje danych PCM.
+   * We never call mic_->start() ourselves.
+   * add_data_callback() delivers successive chunks of PCM
+   * data to us whenever the microphone is capturing.
    */
 
   this->mic_->add_data_callback(
@@ -107,7 +109,8 @@ void FFTAnalyzer::compute_bar_edges_() {
   const int max_bin =
       static_cast<int>(this->fft_size_ / 2 - 1);
 
-  // Rozklad logarytmiczny granic pasm miedzy bar_low_hz_ a bar_high_hz_.
+  // Logarithmic distribution of band edges between bar_low_hz_ and
+  // bar_high_hz_.
   const float log_low = log10f(this->bar_low_hz_);
   const float log_high = log10f(this->bar_high_hz_);
 
@@ -148,7 +151,7 @@ void FFTAnalyzer::process_audio_(
   }
 
   /*
-   * Dane z ES7210:
+   * Data from the ES7210:
    *
    * 16-bit PCM
    * little endian
@@ -160,9 +163,9 @@ void FFTAnalyzer::process_audio_(
   for (size_t i = 0; i < sample_count; i++) {
 
     /*
-     * Jezeli poprzednia ramka czeka na
-     * obliczenie FFT, nie dokladamy kolejnych
-     * probek.
+     * If the previous window is still waiting to be
+     * processed by the FFT, don't append any more
+     * samples to it.
      */
     if (this->new_data_) {
       return;
@@ -200,7 +203,7 @@ void FFTAnalyzer::loop() {
   }
 
   /*
-   * Zabezpieczenie przed ponownym przetwarzaniem.
+   * Guard against processing the same window twice.
    */
   this->new_data_ = false;
 
@@ -211,8 +214,9 @@ void FFTAnalyzer::loop() {
   this->calculate_fft_();
   this->samples_.clear();
   //this->calculate_fft_();
-  // Zachowaj polowe probek (50% overlap) zamiast czyscic caly bufor -
-  // kolejna klatka FFT policzy sie szybciej i animacja bedzie plynniejsza.
+  // Keep half of the samples (50% overlap) instead of clearing the whole
+  // buffer - the next FFT window fills up faster and the animation looks
+  // smoother.
   // half = this->fft_size_ / 2;
   //std::vector<float> tail(this->samples_.end() - half, this->samples_.end());
   //this->samples_ = std::move(tail);
@@ -359,11 +363,11 @@ void FFTAnalyzer::calculate_fft_() {
   // --------------------------------------------------
 
   /*
-   * 512 probek @ 48 kHz:
+   * 512 samples @ 48 kHz:
    *
    * 48000 / 512 = 93.75 Hz/bin
    *
-   * Pasma:
+   * Bands:
    *
    * 0 = 60 Hz
    * 1 = 120 Hz
@@ -471,13 +475,14 @@ void FFTAnalyzer::calculate_fft_() {
     this->bands_[band] = value;
 
     // ------------------------------------------------
-    // Peak-hold + decay wygladzanie
+    // Peak-hold + decay smoothing
     // ------------------------------------------------
     //
-    // Jesli nowa wartosc jest wyzsza od aktualnie
-    // wygladzonej - natychmiastowy "atak" (skok w gore).
-    // W przeciwnym razie plynne opadanie wg wspolczynnika
-    // decay_ (np. 0.85 = powolne opadanie, 0.5 = szybkie).
+    // If the new value is higher than the currently
+    // smoothed one - an instant "attack" (jump up).
+    // Otherwise, a smooth fall-off governed by the
+    // decay_ factor (e.g. 0.85 = slow fall-off, 0.5 =
+    // fast fall-off).
 
     if (value > this->smoothed_[band]) {
       this->smoothed_[band] = value;
@@ -489,7 +494,7 @@ void FFTAnalyzer::calculate_fft_() {
   }
 
   // --------------------------------------------------
-  // Generyczne slupki do wizualizacji (log-spaced)
+  // Generic visualizer bars (log-spaced)
   // --------------------------------------------------
 
   if (this->bar_count_ > 0 && this->bar_edges_ready_) {
