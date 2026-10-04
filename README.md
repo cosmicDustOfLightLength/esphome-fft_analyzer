@@ -121,7 +121,7 @@ fft_analyzer:
   overlap: false               # true | false, default false
   noise_floor: 0.0             # >= 0.0, default 0.0 (gate disabled)
 
-  bar_count: 0                 # 0 - 128, default 0 (visualizer bars disabled)
+  bar_count: 5                 # 0 - 128, default 0 (visualizer bars disabled)
   bar_low_frequency: 50Hz
   bar_high_frequency: 18000Hz
 ```
