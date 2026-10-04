@@ -1,0 +1,132 @@
+# ---------------------------------------------------------------------------
+# Example: spectrum-analyzer "equalizer" display with a peak-hold indicator.
+#
+# Each bar is colored green / yellow / red depending on its level, and a
+# white "cap" line bounces on top of each bar and falls back down under
+# simulated gravity, like the peak indicator on a hardware VU meter / like
+# a ball bouncing on a paddle.
+#
+# Requires `fft_analyzer` configured with a non-zero `bar_count` (see
+# README.md for the full option reference). Adjust GRAVITY / DB_MIN / DB_MAX
+# to taste for your microphone gain and screen size.
+# ---------------------------------------------------------------------------
+
+fft_analyzer:
+  id: fft
+  microphone: mic_id
+  fft_size: 512
+  decay: 0.85
+  overlap: true          # smoother animation; set to false to save CPU
+  noise_floor: 0.02       # tune by watching the DEBUG log in a quiet room
+  bar_count: 32
+  bar_low_frequency: 50Hz
+  bar_high_frequency: 18000Hz
+
+# IMPORTANT: the microphone component does not stream audio on its own -
+# fft_analyzer sees nothing until something starts it with
+# `microphone.capture`. A switch is the recommended way to do that: it
+# persists its on/off state and is controllable from Home Assistant.
+# (Alternative: start it unconditionally in `esphome: on_boot:`, see
+# README.md for that snippet and the tradeoffs of each approach.)
+switch:
+  - platform: template
+    name: "Equalizer microphone"
+    optimistic: true
+    turn_on_action:
+      - microphone.capture: mic_id
+    turn_off_action:
+      - microphone.stop_capture: mic_id
+
+# The 9 named bands are logged every FFT frame at DEBUG level, which is
+# useful while tuning noise_floor/decay but noisy to leave on. Silence
+# just this component once you're done tuning:
+logger:
+  level: DEBUG
+  logs:
+    fft_analyzer: INFO
+
+color:
+  - id: red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: yellow
+    red: 100%
+    green: 100%
+    blue: 0%
+  - id: green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: white
+    red: 100%
+    green: 100%
+    blue: 100%
+
+display:
+  - platform: hub75
+    # ... your HUB75 display config here ...
+    pages:
+      - id: equalizer_floor
+        lambda: |-
+
+          // Per-bar peak-indicator state. `static` so it survives between
+          // frames (this lambda is re-run every refresh).
+          static float peak_y[128] = {};     // cap Y position in pixels (0 = top of screen)
+          static float peak_vel[128] = {};   // cap falling speed
+          static bool peak_init = false;
+
+          const int NUM_BARS = id(fft).get_bar_count();
+          int screen_w = it.get_width();
+          int screen_h = it.get_height();
+          int bar_w = screen_w / NUM_BARS;
+
+          if (!peak_init) {
+            for (int i = 0; i < NUM_BARS; i++) peak_y[i] = screen_h;
+            peak_init = true;
+          }
+
+          // Tune these three to match your microphone gain and taste.
+          const float DB_MIN = -60.0f;   // level mapped to an empty bar
+          const float DB_MAX = -10.0f;   // level mapped to a full-height bar
+          const float GRAVITY = 0.4f;    // how fast the cap falls - higher = faster
+          const int PEAK_HEIGHT = 1;     // thickness of the cap, in pixels
+
+          for (int i = 0; i < NUM_BARS; i++) {
+            float v = id(fft).get_bar(i);
+            if (std::isnan(v) || v < 0.0f) v = 0.0f;
+
+            // Convert the linear FFT magnitude to dB and normalize to 0..1
+            // against the configured DB_MIN/DB_MAX range.
+            float db = 20.0f * log10f(v + 1e-6f);
+            float norm = (db - DB_MIN) / (DB_MAX - DB_MIN);
+            if (norm < 0.0f) norm = 0.0f;
+            if (norm > 1.0f) norm = 1.0f;
+
+            int bar_h = (int)(norm * screen_h);
+            int x0 = i * bar_w;
+            int y0 = screen_h - bar_h;   // top edge of the current bar
+
+            // --- Peak-cap physics (a ball bouncing on the bar like a paddle) ---
+            if (y0 <= peak_y[i]) {
+              // Bar has caught up to (or passed) the cap - snap the cap to
+              // the bar top and reset its fall speed.
+              peak_y[i] = y0;
+              peak_vel[i] = 0.0f;
+            } else {
+              // Bar dropped below the cap - let the cap fall under gravity.
+              peak_vel[i] += GRAVITY;
+              peak_y[i] += peak_vel[i];
+              if (peak_y[i] > screen_h - PEAK_HEIGHT) {
+                peak_y[i] = screen_h - PEAK_HEIGHT;
+                peak_vel[i] = 0.0f;
+              }
+            }
+
+            Color bar_color = id(green);
+            if (norm > 0.75f) bar_color = id(red);
+            else if (norm > 0.4f) bar_color = id(yellow);
+
+            it.filled_rectangle(x0, y0, bar_w - 1, bar_h, bar_color);
+            it.filled_rectangle(x0, (int) peak_y[i], bar_w - 1, PEAK_HEIGHT, id(white));
+          }
